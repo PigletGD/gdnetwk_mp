@@ -4,10 +4,10 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-int main() {
-	std::string ipAddress = "127.0.0.1";		// IP Address of the server
-	int port = 54000;							// Listening port # on the server
+std::string ipAddress = "127.0.0.1";		// IP Address of the server
+int port = 54010;							// Listening port # on the server
 
+int main() {
 	// initialize winsock
 	WSAData data;
 	WORD ver = MAKEWORD(2, 2);
