@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <WS2tcpip.h>
 
 #pragma comment (lib, "ws2_32.lib")
@@ -79,6 +80,8 @@ int main() {
 			std::cout << "Client disconnected..." << std::endl;
 			break;
 		}
+
+		std::cout << std::string(buf, 0, bytesReceived) << std::endl;
 
 		// Echo message back to client
 		send(clientSocket, buf, bytesReceived + 1, 0);
