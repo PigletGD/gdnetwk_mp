@@ -68,8 +68,9 @@ int main() {
 				FD_SET(client, &master);
 
 				// send a welcome message to the connected client
-				std::string welcomeMsg = "Welcome to the Awesome Chat Server!\r\n";
-				send(client, welcomeMsg.c_str(), welcomeMsg.size() + 1, 0);
+				std::ostringstream welcomeMsg;
+				welcomeMsg << "Welcome to the Awesome Chat Server!\r" << std::endl;
+				send(client, welcomeMsg.str().c_str(), welcomeMsg.str().size() + 1, 0);
 
 				// todo: broadcast we have a new connection
 			}
@@ -89,7 +90,7 @@ int main() {
 						SOCKET outSock = master.fd_array[i];
 						if (outSock != listening && outSock != socket) {
 							std::ostringstream ss;
-							ss << "SOCKET #" << socket << ": " << buf << "\r\n";
+							ss <<  buf << "\r" << std::endl;
 							std::string strOut = ss.str();
 							send(outSock, strOut.c_str(), strOut.size() + 1, 0);
 						}

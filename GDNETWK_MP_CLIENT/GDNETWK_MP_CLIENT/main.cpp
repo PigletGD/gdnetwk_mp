@@ -2,28 +2,49 @@
 #include <string>
 #include <WS2tcpip.h>
 #include <thread>
+#include <conio.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
 std::string ipAddress = "127.0.0.1";		// IP Address of the server
 int port = 54010;							// Listening port # on the server
+std::string username = "";
+std::string userInput = "";
 
 SOCKET sock;
 
-void sendMessage() {
-	// do-while loop to send and receive data
-	std::string userInput;
-
+// prints out characters one at a time and saves it to global userInput string to
+// prevent typed out messages from being cut off in the middle by received messages
+void typeMessage() {
 	do {
-		// prompt user for some text
-		//std::cout << "> ";
-		std::getline(std::cin, userInput);
+		char letter = _getch();
 
-		if (userInput.size() > 0) { // make sure the user has typed in something
-			// send the text
-			int sendResult = send(sock, userInput.c_str(), userInput.size() + 1, 0);	
+		if (letter == '\r') {
+			if (userInput.size() > 0) { // make sure the user has typed in something
+				std::cout << std::endl << std::endl;
+
+				std::string message = username + ": " + userInput;
+
+				// send the text
+				int sendResult = send(sock, message.c_str(), message.size() + 1, 0);
+
+				userInput = "";
+				std::cout << username << ": ";
+			}
 		}
-	} while (userInput.size() > 0);
+		else if (letter == '\b') {
+			if (!userInput.empty()) {
+				std::cout << "\b \b";
+
+				userInput.pop_back();
+			}
+		}
+		else {
+			std::cout << letter;
+
+			userInput.push_back(letter);
+		}
+	} while (true);
 }
 
 void receiveMessage() {
@@ -34,14 +55,14 @@ void receiveMessage() {
 		ZeroMemory(buf, 4096);
 		int bytesReceived = recv(sock, buf, 4096, 0);
 		if (bytesReceived > 0) { // echo response to console if bytes were received
-			std::cout << "SERVER> " << std::string(buf, 0, bytesReceived) << std::endl;
-		}
-	}
-}
+			int inputSize = userInput.size();
 
-void test() {
-	while (true) {
-		std::cout << "HAHAHAHAHAHAHAHHAHAHAHA\n";
+			for (int i = 0; i < inputSize; i++) {
+				std::cout << "\b \b";
+			}
+
+			std::cout << std::string(buf, 0, bytesReceived) << std::endl << username << ": " << userInput;
+		}
 	}
 }
 
@@ -77,8 +98,12 @@ int main() {
 		WSACleanup();
 		return -1;
 	}
+
+	std::cout << "Type in username: ";
+	std::getline(std::cin, username);
+	std::cout << std::endl;
 	
-	std::thread(&sendMessage).detach();
+	std::thread(&typeMessage).detach();
 	std::thread(&receiveMessage).detach();
 
 	while (true);
