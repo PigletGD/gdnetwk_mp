@@ -106,11 +106,10 @@ int main() {
 	std::thread(&typeMessage).detach();
 	std::thread(&receiveMessage).detach();
 
-	while (true);
+	while (true)
+		;
 
 	// gracefully close down everything
 	closesocket(sock);
 	WSACleanup();
-
-	return 0;
 }
