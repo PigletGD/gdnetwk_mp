@@ -16,7 +16,7 @@ SOCKET sock;
 // prints out characters one at a time and saves it to global userInput string to
 // prevent typed out messages from being cut off in the middle by received messages
 void typeMessage() {
-	do {
+	while (true) {
 		char letter = _getch();
 
 		if (letter == '\r') {
@@ -29,22 +29,17 @@ void typeMessage() {
 				int sendResult = send(sock, message.c_str(), message.size() + 1, 0);
 
 				userInput = "";
-				std::cout << username << ": ";
 			}
-		}
-		else if (letter == '\b') {
+		} else if (letter == '\b') {
 			if (!userInput.empty()) {
 				std::cout << "\b \b";
-
 				userInput.pop_back();
 			}
-		}
-		else {
+		} else {
 			std::cout << letter;
-
 			userInput.push_back(letter);
 		}
-	} while (true);
+	}
 }
 
 void receiveMessage() {
@@ -99,16 +94,19 @@ int main() {
 		return -1;
 	}
 
-	std::cout << "Type in username: ";
+	std::cout << "Enter your name: ";
 	std::getline(std::cin, username);
-	std::cout << std::endl;
+	std::cout << "\n\nAwesome " << username << "! Welcome to blackjack.\n\n";
+
+	// Send username to server
+	std::string message = "username: " + username;
+	send(sock, message.c_str(), message.size() + 1, 0);
 	
-	std::thread(&typeMessage).detach();
+	//std::thread(&typeMessage).detach();
 	std::thread(&receiveMessage).detach();
 
-	while (true)
-		;
-
+	typeMessage();
+	
 	// gracefully close down everything
 	closesocket(sock);
 	WSACleanup();
