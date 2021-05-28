@@ -4,6 +4,7 @@
 #include "Player.h"
 #include "Input.h"
 #include "Random.h"
+#include "TcpListener.h"
 #include <vector>
 
 enum class PlayerState {
@@ -19,7 +20,8 @@ enum class PlayerState {
 
 class Game {
 public:
-	Game() {
+	Game(TcpListener* listener) {
+		listener->setCallback(std::bind(&Game::Listener_MessageReceived, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
 		resetDeck();
 		numPlayers = 0;
 	}
@@ -32,72 +34,22 @@ public:
 
 	void run() {
 
-		std::cout << "START GAME" << std::endl;
-		int time = 0;
+		gameStarted = false;
 
-		while (joinedPlayers.size() < 4) {
-			/*if (time > 100000) {
-				time -= 100000;
-				std::cout << "CURRENT PLAYER COUNT" <<  << std::endl;
-			}*/
-		}
+		std::cout << "START GAME" << std::endl;
+
+		while (joinedPlayers.size() < 2);
+
+		gameStarted = true;
 
 		while (true) {
 			reset();
 
-			for (int i = 0; i < joinedPlayers.size(); i++) {
-				int& player_bet = playerBets[i];
-				
-				while (player_bet <= 0) {
-					std::cout << "\nPlace your bet (0 if you want to skip): ";
-					player_bet = Input::getIntInput();
-				}
-				
-				if (player_bet == 0) {
-					playerStates[i] = PlayerState::NotPlaying;
-					std::cout << "\nSkipping this game...";
-				} else {
-					playerStates[i] = PlayerState::TakingTurn;
-				}
-			}
+			allowPlayersToBet();
 
 			dealStartingCards();
 
-			for (int i = 0; i < joinedPlayers.size(); i++) {
-				PlayerState& currentPlayerState = playerStates[i];
-
-				// Skip not playing player
-				if (currentPlayerState == PlayerState::NotPlaying) {
-					continue;
-				}
-
-				// Check for blackjack
-				if (playerHands[i].getTotalValue() == 21) {
-					currentPlayerState = PlayerState::Blackjack;
-					continue;
-				}
-				
-				printSeparator();
-
-				// Process player's turn
-				while (currentPlayerState == PlayerState::TakingTurn) {
-					printDealerCardsInGame();
-					printPlayerState(i);
-					
-					std::cout << "Press H to draw a card, press S to stand: ";
-					char move = Input::getCharInput();
-
-					if (move == 'h' || move == 'H') {
-						hit(i);
-					} else if (move == 's' || move == 'S') {
-						stand(i);
-					} else {
-						std::cout << "Invalid input! Please try again.\n";
-					}
-					
-					std::cout << "\n\n";
-				}
-			}
+			givePlayersTurns();
 
 			drawDealerCards();
 			calculateGameEndResults();
@@ -105,6 +57,8 @@ public:
 			printSeparator();
 			printDealerCardsEndGame();
 			printPlayerResults();
+
+			//moveQueuedPlayersToGame();
 		}
 	}
 
@@ -114,10 +68,40 @@ public:
 		playerBets.push_back(0);
 		playerStates.emplace_back(PlayerState::None);
 
-		std::cout << "Added " << player.getClientNumber() << ", Player Count At " << joinedPlayers.size() << std::endl;
+		std::cout << "Added " << player.getName() << ", Player Count At " << joinedPlayers.size() << std::endl;
+	}
+
+	void addPlayerToQueue(const Player& player) {
+		queuedPlayersToJoin.push_back(player);
+
+		std::cout << "Added " << player.getName() << " to queue, Queue Count At " << queuedPlayersToJoin.size() << std::endl;
+	}
+
+	void moveQueuedPlayersToGame() {
+		for (int i = 0; i < queuedPlayersToJoin.size(); i++) {
+			addPlayer(queuedPlayersToJoin[i]);
+		}
+
+		queuedPlayersToJoin.clear();
+
+		std::cout << "Moved queued to active players" << std::endl;
 	}
 
 private:
+	void allowPlayersToBet() {
+		playerTurn = 0;
+
+		std::cout << joinedPlayers.size() << std::endl;
+
+		while (playerTurn < joinedPlayers.size()) {
+			std::cout << std::endl << joinedPlayers[playerTurn].getName() << ", place your bet (0 if you want to skip): ";
+
+			lockFunction();
+
+			switchPlayerTurn();
+		}
+	}
+
 	void dealStartingCards() {
 		// Draw cards for dealer
 		dealerHand.addCard(drawRandomCardFromDeck());
@@ -137,6 +121,43 @@ private:
 		return card;
 	}
 
+	void givePlayersTurns() {
+		playerTurn = 0;
+
+		while (playerTurn < joinedPlayers.size()) {
+			PlayerState& currentPlayerState = playerStates[playerTurn];
+
+			// Skip not playing player
+			if (currentPlayerState == PlayerState::NotPlaying) {
+				std::cout << "not playing" << std::endl;
+				switchPlayerTurn();
+				continue;
+			}
+
+			// Check for blackjack
+			if (playerHands[playerTurn].getTotalValue() == 21) {
+				std::cout << "blackjack" << std::endl;
+				currentPlayerState = PlayerState::Blackjack;
+				switchPlayerTurn();
+				continue;
+			}
+
+			printSeparator();
+
+			// Process player's turn
+			while (currentPlayerState == PlayerState::TakingTurn) {
+				printDealerCardsInGame();
+				printPlayerState(playerTurn);
+
+				std::cout << "Type \\hit or \\h to hit or \\stand or \\s to stand: ";
+
+				lockFunction();
+			}
+
+			switchPlayerTurn();
+		}
+	}
+
 	void hit(int i) {
 		Hand& hand = playerHands[i];
 		
@@ -144,12 +165,18 @@ private:
 
 		if (hand.getTotalValue() > 21) {
 			playerStates[i] = PlayerState::Bust;
-			std::cout << "\n\n******You went bust!******\n";
+			std::cout << "hand value: " << hand.getTotalValue() << "\n******You went bust!******\n";
 		}
+		else if (hand.getTotalValue() == 21) {
+			playerStates[i] = PlayerState::Blackjack;
+		}
+
+		unlockFunction();
 	}
 
 	void stand(int i) {
 		playerStates[i] = PlayerState::DoneTakingTurn;
+		unlockFunction();
 	}
 
 	void drawDealerCards()
@@ -281,6 +308,104 @@ private:
 		}
 	}
 
+	void Listener_MessageReceived(TcpListener* listener, int client, int sentClient, std::string msg) {
+		std::cout << "processing message" << std::endl;
+
+		std::string originalMsg = msg;
+		std::string delimiter = " ";
+		size_t pos = msg.find(delimiter);
+		msg.erase(0, pos + delimiter.size());
+		pos = msg.find(delimiter);
+		std::string command = msg.substr(0, pos);
+
+		if (command == "\\add") {
+			msg.erase(0, pos + delimiter.size());
+			pos = msg.find(delimiter);
+
+			for (int i = 0; i < joinedPlayers.size(); i++) {
+				if (sentClient == joinedPlayers[i].getClientNumber())
+				{
+					if (originalMsg[0] == ' ' && client != sentClient) {
+						std::cout << "hi" << std::endl;
+						std::string sendMessage = msg.substr(0, pos) + " joined the Game!\r";
+						listener->sendMessageToClient(client, sendMessage);
+						return;
+					}
+					else return;
+				}	
+			}
+
+			if (client == sentClient) {
+				Player newPlayer(msg.substr(0, pos), client, 1000);
+				
+				if (!gameStarted) addPlayer(newPlayer);
+				else addPlayerToQueue(newPlayer);
+			}
+		}
+		else if (command == "\\bet") {
+			std::cout << "betting command" << std::endl;
+			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+				sentClient == client && playerStates[playerTurn] == PlayerState::None) {
+
+				msg.erase(0, pos + delimiter.size());
+				pos = msg.find(delimiter);
+
+				std::string player_bet_string = msg.substr(0, pos);
+				if ((int)player_bet_string[0] >= 48 && (int)player_bet_string[0] <= 57) {
+					int player_bet = std::stoi(player_bet_string);
+
+					if (player_bet <= 0) {
+						playerStates[playerTurn] = PlayerState::NotPlaying;
+						std::cout << "\nSkipping this game...";
+					}
+					else {
+						playerBets[playerTurn] = player_bet;
+						playerStates[playerTurn] = PlayerState::TakingTurn;
+					}
+
+					unlockFunction();
+				}
+			}
+			std::cout << "betting command end" << std::endl;
+		}
+		else if (command == "\\hit" || command == "\\h") {
+			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
+				hit(playerTurn);
+
+				std::cout << std::endl;
+			}
+		}
+		else if (command == "\\stand" || command == "\\s") {
+			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
+				stand(playerTurn);
+
+				std::cout << std::endl;
+			}
+		}
+		else {
+			if (client == sentClient) return;
+			listener->sendMessageToClient(client, originalMsg);
+		} 
+	}
+
+	void switchPlayerTurn() {
+		std::cout << "increment turn" << std::endl;
+		playerTurn++;
+	}
+
+	void lockFunction() {
+		lock = true;
+		std::cout << "\nlock" << std::endl;
+		while (lock);
+		std::cout << "unlock" << std::endl;
+	}
+
+	void unlockFunction() {
+		lock = false;
+	}
+
 	const int MAX_PLAYERS = 4;
 
 	std::vector<Card> deck;
@@ -291,4 +416,7 @@ private:
 	std::vector<int> playerBets;
 	Hand dealerHand;
 	int numPlayers;
+	int playerTurn;
+	bool lock;
+	bool gameStarted;
 };

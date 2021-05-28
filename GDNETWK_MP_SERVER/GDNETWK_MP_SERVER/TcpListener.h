@@ -3,26 +3,30 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <functional>
 
 #include <WS2tcpip.h>					// header file for winsock functions
 #pragma comment (lib, "ws2_32.lib")		// winsock library file
 
-#define MAX_BUFFER_SIZE (41912)
+#define MAX_BUFFER_SIZE (10000)
 
 // forward declaration of class
 class TcpListener;
 class Game;
 
 // callback to data received
-typedef void (*MessageReceivedHandler)(TcpListener* listener, int socketId, std::string msg);
+//typedef void (*MessageReceivedHandler)(TcpListener* listener, int socketId, std::string msg);
+typedef std::function<void(TcpListener* listener, int socketId, int sentSocketId, std::string msg)> MessageReceivedHandler;
 
 class TcpListener {
 public:
-	TcpListener(std::string ipAddress, int port, MessageReceivedHandler handler);
+	TcpListener(std::string ipAddress, int port);
 
 	~TcpListener();
 
 	void setGame(Game* game);
+
+	void setCallback(MessageReceivedHandler handler);
 
 	// send message to specified client
 	void sendMessageToClient(int clientSocket, std::string msg);

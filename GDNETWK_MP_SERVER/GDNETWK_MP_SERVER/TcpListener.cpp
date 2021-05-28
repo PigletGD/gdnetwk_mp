@@ -1,8 +1,8 @@
 #include "TcpListener.h"
 #include "Game.h"
 
-TcpListener::TcpListener(std::string ipAddress, int port, MessageReceivedHandler handler)
-	: m_ipAddress(ipAddress), m_port(port), MessageReceived(handler) {
+TcpListener::TcpListener(std::string ipAddress, int port)
+	: m_ipAddress(ipAddress), m_port(port) {
 
 }
 
@@ -12,6 +12,10 @@ TcpListener::~TcpListener() {
 
 void TcpListener::setGame(Game* game) {
 	m_Game = game;
+}
+
+void TcpListener::setCallback(MessageReceivedHandler handler) {
+	MessageReceived = handler;
 }
 
 void TcpListener::sendMessageToClient(int clientSocket, std::string msg) {
@@ -54,8 +58,8 @@ void TcpListener::run() {
 				// add the new connection to the list of connected clients
 				FD_SET(client, &master);
 
-				Player newPlayer("Temp", client, 1000);
-				m_Game->addPlayer(newPlayer);
+				// ensures client in waiting gets sent blanket message
+				sendMessageToClient(client, " \b");
 			}
 			else {
 				ZeroMemory(buf, MAX_BUFFER_SIZE);
@@ -70,12 +74,11 @@ void TcpListener::run() {
 					// send message to other clients, and definitely not listening socket
 					for (int i = 0; i < master.fd_count; i++) {
 						SOCKET outSock = master.fd_array[i];
-						if (MessageReceived != NULL && outSock != listening && outSock != socket) {
+						if (MessageReceived != NULL && outSock != listening) {
 							std::ostringstream ss;
-							ss << buf << "\r" << std::endl;
+							ss << buf << " \r" << std::endl;
 							std::string strOut = ss.str();
-							MessageReceived(this, outSock, std::string(buf, 0, bytesIn));
-							//send(outSock, strOut.c_str(), strOut.size() + 1, 0);
+							MessageReceived(this, outSock, socket, std::string(buf, 0, bytesIn));
 						}
 					}
 				}
