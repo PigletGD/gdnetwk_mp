@@ -1,4 +1,5 @@
 #include "TcpListener.h"
+#include "Game.h"
 
 TcpListener::TcpListener(std::string ipAddress, int port, MessageReceivedHandler handler)
 	: m_ipAddress(ipAddress), m_port(port), MessageReceived(handler) {
@@ -9,62 +10,77 @@ TcpListener::~TcpListener() {
 	cleanup();
 }
 
+void TcpListener::setGame(Game* game) {
+	m_Game = game;
+}
+
 void TcpListener::sendMessageToClient(int clientSocket, std::string msg) {
 	send(clientSocket, msg.c_str(), msg.size() + 1, 0);
 }
 
 // initialize winsock
 bool TcpListener::init() {
+	// initialize winsock
 	WSADATA wsData; // variable to hold data when starting up winsock
 	WORD ver = MAKEWORD(2, 2); // indicates version of winsock (ver. 2.2)
-
-	int wsInit = WSAStartup(ver, &wsData);
-	
-	// TODO: Inform caller the error that occured
-	
-	/*if (wsInit != 0) {
+	int wsOk = WSAStartup(ver, &wsData);
+	if (wsOk != 0) {
 		std::cerr << "Can't initialize winsock! Quitting..." << std::endl;
-		return -1;
-	}*/
+		return false;
+	}
 
-	return wsInit == 0;
+	createSocket();
+
+	return listening != -1;
 }
 
 // main processing loop
 void TcpListener::run() {
 	char buf[MAX_BUFFER_SIZE];
 
-	while (true) {
-		SOCKET listening = createSocket();
-		if (listening == INVALID_SOCKET) {
-			break;
-		}
+	FD_ZERO(&master);
+	FD_SET(listening, &master);
 
-		SOCKET client = waitForConnection(listening);
-		if (client != INVALID_SOCKET) {
-			closesocket(listening);
-			int bytesReceived = 0;
-			do {
+	while (true) {
+		fd_set copy = master;
+
+		int socketCount = select(0, &copy, nullptr, nullptr, nullptr);
+
+		for (int i = 0; i < socketCount; i++) {
+			SOCKET socket = copy.fd_array[i];
+			if (socket == listening) {
+
+				SOCKET client = waitForConnection();
+				// add the new connection to the list of connected clients
+				FD_SET(client, &master);
+
+				Player newPlayer("Temp", client, 1000);
+				m_Game->addPlayer(newPlayer);
+			}
+			else {
 				ZeroMemory(buf, MAX_BUFFER_SIZE);
 
-				// wait for client to send data
-				bytesReceived = recv(client, buf, MAX_BUFFER_SIZE, 0);
-				if (bytesReceived > 0) {
-					if (MessageReceived != NULL) {
-						std::cout << std::string(buf, 0, bytesReceived) << std::endl;
-
-						MessageReceived(this, client, std::string(buf, 0, bytesReceived));
+				int bytesIn = recv(socket, buf, MAX_BUFFER_SIZE, 0);
+				if (bytesIn <= 0) {
+					// drop client
+					closesocket(socket);
+					FD_CLR(socket, &master);
+				}
+				else {
+					// send message to other clients, and definitely not listening socket
+					for (int i = 0; i < master.fd_count; i++) {
+						SOCKET outSock = master.fd_array[i];
+						if (MessageReceived != NULL && outSock != listening && outSock != socket) {
+							std::ostringstream ss;
+							ss << buf << "\r" << std::endl;
+							std::string strOut = ss.str();
+							MessageReceived(this, outSock, std::string(buf, 0, bytesIn));
+							//send(outSock, strOut.c_str(), strOut.size() + 1, 0);
+						}
 					}
 				}
-
-				//std::cout << std::string(buf, 0, bytesReceived) << std::endl;
-
-				// echo message back to client
-				//send(client, buf, bytesReceived + 1, 0);
-			} while (bytesReceived > 0);
-
-			closesocket(client);
-		}		
+			}
+		}
 	}
 }
 
@@ -74,30 +90,30 @@ void TcpListener::cleanup() {
 }
 
 // create a socket
-SOCKET TcpListener::createSocket() {
+void TcpListener::createSocket() {
 	// AF (Address Family); SOCK_STREAM (TCP Socket)
-	SOCKET listening = socket(AF_INET, SOCK_STREAM, 0);
-	if (listening != INVALID_SOCKET) {
-		sockaddr_in hint;
-		hint.sin_family = AF_INET;
-		hint.sin_port = htons(m_port);
-		inet_pton(AF_INET, m_ipAddress.c_str(), &hint.sin_addr);
-
-		int bindOk = bind(listening, (sockaddr*)&hint, sizeof(hint));
-		if (bindOk != SOCKET_ERROR) {
-			int listenOk = listen(listening, SOMAXCONN);
-			if (listenOk == SOCKET_ERROR) return -1;
-		}
-		else return -1;
+	listening = socket(AF_INET, SOCK_STREAM, 0);
+	if (listening == INVALID_SOCKET) {
+		std::cerr << "Can't create a socket! Quitting..." << std::endl;
+		return;
 	}
-	
-	return listening;
+
+	// bind socket to ip address and port
+	sockaddr_in hint;
+	hint.sin_family = AF_INET;
+	hint.sin_port = htons(m_port);
+	hint.sin_addr.S_un.S_addr = INADDR_ANY; // could also use inet_pton ....
+	bind(listening, (sockaddr*)&hint, sizeof(hint));
+
+	// tell winsock the socket is for listening
+	int listenOk = listen(listening, SOMAXCONN);
+	if (listenOk == SOCKET_ERROR) return;
 }
 
 // wait for a connection
-SOCKET TcpListener::waitForConnection(SOCKET listening)
+SOCKET TcpListener::waitForConnection()
 {
-	SOCKET client = accept(listening, NULL, NULL);
+	SOCKET client = accept(listening, nullptr, nullptr);
 
 	return client;
 }

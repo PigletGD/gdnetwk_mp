@@ -42,8 +42,12 @@ bool initializeWinsock() {
 	return true;
 }
 
-int oldmain() {
+int main() {
 	TcpListener server(ipAddress, port, Listener_MessageReceived);
+	Game game;
+
+	server.setGame(&game);
+	std::thread gameThread(&Game::run, &game);
 
 	if (server.init())
 		server.run();
@@ -157,13 +161,15 @@ void networking() {
 	}
 }
 
-int main() {
+int newmain() {
 	std::thread networkingThread(&networking);
 	
 	Game game;
 	game.run();
+
+	return 0;
 }
 
 void Listener_MessageReceived(TcpListener* listener, int client, std::string msg) {
-	// listener->sendMessageToClient(client, msg);
+	listener->sendMessageToClient(client, msg);
 }

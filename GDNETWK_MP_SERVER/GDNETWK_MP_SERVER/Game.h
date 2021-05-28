@@ -31,6 +31,17 @@ public:
 	}
 
 	void run() {
+
+		std::cout << "START GAME" << std::endl;
+		int time = 0;
+
+		while (joinedPlayers.size() < 4) {
+			/*if (time > 100000) {
+				time -= 100000;
+				std::cout << "CURRENT PLAYER COUNT" <<  << std::endl;
+			}*/
+		}
+
 		while (true) {
 			reset();
 
@@ -102,6 +113,8 @@ public:
 		playerHands.emplace_back();
 		playerBets.push_back(0);
 		playerStates.emplace_back(PlayerState::None);
+
+		std::cout << "Added " << player.getClientNumber() << ", Player Count At " << joinedPlayers.size() << std::endl;
 	}
 
 private:
