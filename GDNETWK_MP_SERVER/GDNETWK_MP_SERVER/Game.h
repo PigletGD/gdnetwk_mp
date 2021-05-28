@@ -118,7 +118,7 @@ private:
 	}
 
 	Card drawRandomCardFromDeck() {
-		int index = Random::getRandomInt(0, deck.size() - 1);
+		int index = Random::getRandom(0, deck.size() - 1);
 		Card card = deck[index];
 		deck.erase(deck.begin() + index);
 		return card;
