@@ -102,7 +102,8 @@ int main() {
 		if (username[i] == ' ')
 			username[i] = '_';
 	}
-	std::cout << std::endl << std::endl << "Awesome " << username << "! Welcome to blackjack." << std::endl << std::endl;
+	std::cout << std::endl << std::endl << "Awesome " << username << "! Welcome to BLACKJACK." << std::endl;
+	std::cout << "Type \\help for list of available commands to play the game." << std::endl << std::endl;
 
 	// Adds user to game
 	std::string message = " \\add " + username;

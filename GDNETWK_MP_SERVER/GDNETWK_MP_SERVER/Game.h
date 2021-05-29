@@ -22,7 +22,7 @@ enum class PlayerState {
 
 class Game {
 public:
-	Game(TcpListener* listener) {
+	Game(TcpListener* listener) : m_Listener(listener) {
 		listener->setCallback(std::bind(&Game::Listener_MessageReceived, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
 		resetDeck();
 		numPlayers = 0;
@@ -41,7 +41,7 @@ public:
 
 		std::cout << "START GAME" << std::endl;
 
-		while (joinedPlayers.size() < 2);
+		while (joinedPlayers.size() < MAX_PLAYERS && !gameStarted);
 
 		gameStarted = true;
 
@@ -49,20 +49,13 @@ public:
 			reset();
 
 			allowPlayersToBet();
-			std::cout << "deal starting cards\n";
 			dealStartingCards();
-			std::cout << "give player turns\n";
 			givePlayersTurns();
 
-			std::cout << "draw dealer cards\n";
 			drawDealerCards();
-			std::cout << "calculate end resulst\n";
 			calculateGameEndResults();
 			
-			printSeparator();
-			std::cout << "print dealer results\n";
 			printDealerCardsEndGame();
-			std::cout << "print player results\n";
 			printPlayerResults();
 
 			moveQueuedPlayersToGame();
@@ -72,7 +65,7 @@ public:
 				break;
 		}
 
-		std::cout << "game has ended" << std::endl;
+		std::cout << "GAME ENDED" << std::endl;
 		exit(0);
 	}
 
@@ -82,8 +75,16 @@ public:
 		playerHands.emplace_back();
 		playerBets.push_back(0);
 		playerStates.emplace_back(PlayerState::None);
+		playerMessages.emplace_back();
 
-		std::cout << "Added " << player.getName() << ", Player Count At " << joinedPlayers.size() << std::endl;
+		std::string msg = "\n[BLACKJACK] Added " + player.getName() + ", Player Count At ";
+		msg += std::to_string(joinedPlayers.size()) + "\n";
+		
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting) {
+				m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+			}
+		}
 		mutex.release();
 	}
 
@@ -91,28 +92,47 @@ public:
 		mutex.acquire();
 		queuedPlayersToJoin.push_back(player);
 
-		std::cout << "Added " << player.getName() << " to queue, Queue Count At " << queuedPlayersToJoin.size() << std::endl;
+		std::string msg = "\n[BLACKJACK] Added " + player.getName() + " to queue, Queue Count At ";
+		msg += std::to_string(queuedPlayersToJoin.size()) + "\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting) {
+				m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+			}
+		}
 		mutex.release();
 	}
 
 	void moveQueuedPlayersToGame() {
+		std::string msg;
 		for (int i = 0; i < queuedPlayersToJoin.size(); i++) {
+			msg += "\n[BLACKJACK] Moved " + queuedPlayersToJoin[i].getName() +" to active players\n";
 			addPlayer(queuedPlayersToJoin[i]);
 		}
 
 		mutex.acquire();
 		queuedPlayersToJoin.clear();
-		mutex.release();
 
-		std::cout << "Moved queued to active players" << std::endl;
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
 	}
 
 	void queuePlayerToRemove(int client) {
 		mutex.acquire();
+
+		std::string msg;
 		for (int i = 0; i < queuedPlayersToJoin.size(); i++) {
 			if (client == queuedPlayersToJoin[i].getClientNumber()) {
 				queuedPlayersToJoin.erase(queuedPlayersToJoin.begin() + i);
-				std::cout << "Remove " << client << std::endl;
+				msg += "\n[BLACKJACK] Queued to remove queued client " + std::to_string(client) + '\n';
+				for (int i = 0; i < joinedPlayers.size(); i++) {
+					if (playerStates[i] != PlayerState::Quitting) {
+						m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+					}
+				}
 				mutex.release();
 				return;
 			}
@@ -121,10 +141,28 @@ public:
 		for (int i = 0; i < joinedPlayers.size(); i++) {
 			if (client == joinedPlayers[i].getClientNumber()) {
 				clientsQuitting.push_back(client);
-				playerStates[i] = PlayerState::Quitting;
-				if (i == playerTurn) unlockFunction();
-				std::cout << "Queue Player " << joinedPlayers[i].getName() << " Removal" << std::endl;
-				mutex.release();
+				
+				if (!gameStarted) {
+					msg += "\n[BLACKJACK] Queue Player " + joinedPlayers[i].getName() + " Removal\n";
+					for (int i = 0; i < joinedPlayers.size(); i++) {
+						if (playerStates[i] != PlayerState::Quitting) {
+							m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+						}
+					}
+					mutex.release();
+					removeQuittedPlayers();
+				}
+				else {
+					playerStates[i] = PlayerState::Quitting;
+					if (i == playerTurn) unlockFunction();
+					msg += "\n[BLACKJACK] Queue Player " + joinedPlayers[i].getName() + " Removal\n";
+					for (int i = 0; i < joinedPlayers.size(); i++) {
+						if (playerStates[i] != PlayerState::Quitting) {
+							m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+						}
+					}
+					mutex.release();
+				}
 				return;
 			}
 		}
@@ -133,18 +171,27 @@ public:
 
 	void removeQuittedPlayers() {
 		mutex.acquire();
+
+		std::string msg = "\n[BLACKJACK]\n";
+
 		for (int i = 0; i < clientsQuitting.size(); i++) {
 			for (int j = 0; j < joinedPlayers.size(); j++) {
 				if (clientsQuitting[i] == joinedPlayers[j].getClientNumber()) {
-					std::cout << "Removing Player " << joinedPlayers[j].getName() << std::endl;
+					msg += "Removing Player " + joinedPlayers[j].getName() + "\n";
 					clientsQuitting.erase(clientsQuitting.begin() + i);
 					joinedPlayers.erase(joinedPlayers.begin() + j);
 					playerStates.erase(playerStates.begin() + j);
 					playerHands.erase(playerHands.begin() + j);
 					playerBets.erase(playerBets.begin() + j);
+					playerMessages.erase(playerMessages.begin() + j);
 					i--; j++;
 				}
 			}
+		}
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
 		}
 		mutex.release();
 	}
@@ -152,12 +199,45 @@ public:
 private:
 	void allowPlayersToBet() {
 		while (playerTurn < joinedPlayers.size()) {
-			std::cout << std::endl << joinedPlayers[playerTurn].getName() << ", place your bet (0 if you want to skip): ";
-
+			
+			sendPlayersBetMessage();
+			
 			if (playerStates[playerTurn] != PlayerState::Quitting) lockFunction();
+
+			sendInputtedBetMessage();
 
 			if (cycleThroughPlayerTurns()) break;
 		}
+	}
+
+	void sendPlayersBetMessage() {
+		mutex.acquire();
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + ", place your bet (0 if you want to skip)\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
+	}
+
+	void sendInputtedBetMessage() {
+		mutex.acquire();
+		std::string msg;
+
+		if (playerBets[playerTurn] <= 0)
+			msg += "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " is skipping this round...\n";
+		else 
+		{
+			msg += "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " betted ";
+			msg += std::to_string(playerBets[playerTurn]) + "\n";
+		}
+		
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
 	}
 
 	void dealStartingCards() {
@@ -181,6 +261,50 @@ private:
 		return card;
 	}
 
+	void sendQuitMessage() {
+		mutex.acquire();
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " is quitting... Skipping turn...\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
+	}
+
+	void sendPlayerSkippingTurn() {
+		mutex.acquire();
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " is not playing this turn...\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
+	}
+
+	void sendPlayersGotBlackjack() {
+		mutex.acquire();
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " got blackjack!!!\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
+	}
+
+	void sendPlayersTurnInstructions() {
+		mutex.acquire();
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + ", type \\hit or \\h to hit or \\stand or \\s to stand \n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
+		mutex.release();
+	}
+
 	void givePlayersTurns() {
 		while (playerTurn < joinedPlayers.size()) {
 			mutex.acquire();
@@ -188,25 +312,25 @@ private:
 
 			// Quitting
 			if (currentPlayerState == PlayerState::Quitting) {
-				std::cout << "quitting soon" << std::endl;
 				mutex.release();
+				sendQuitMessage();
 				if (cycleThroughPlayerTurns()) break;
 				else continue;
 			}
 
 			// Skip not playing player
 			if (currentPlayerState == PlayerState::NotPlaying) {
-				std::cout << "not playing" << std::endl;
 				mutex.release();
+				sendPlayerSkippingTurn();
 				if (cycleThroughPlayerTurns()) break;
 				else continue;
 			}
 
 			// Check for blackjack
 			if (playerHands[playerTurn].getTotalValue() == 21) {
-				std::cout << "blackjack" << std::endl;
 				currentPlayerState = PlayerState::Blackjack;
 				mutex.release();
+				sendPlayersGotBlackjack();
 				if (cycleThroughPlayerTurns()) break;
 				else continue;
 			}
@@ -216,10 +340,10 @@ private:
 
 			// Process player's turn
 			while (currentPlayerState == PlayerState::TakingTurn) {
-				printDealerCardsInGame();
-				printPlayerState(playerTurn);
+				sendDealerCardsInGame();
+				sendPlayerState(playerTurn);
 
-				std::cout << "Type \\hit or \\h to hit or \\stand or \\s to stand: ";
+				sendPlayersTurnInstructions();
 
 				lockFunction();
 			}
@@ -237,12 +361,21 @@ private:
 
 		mutex.acquire();
 		if (playerStates[i] != PlayerState::Quitting) {
+			std::string msg;
+
 			if (hand.getTotalValue() > 21) {
 				playerStates[i] = PlayerState::Bust;
-				std::cout << "hand value: " << hand.getTotalValue() << "\n******You went bust!******\n";
+				msg += "\n[BLACKJACK] " + joinedPlayers[i].getName() + " went bust...\n";
 			}
 			else if (hand.getTotalValue() == 21) {
 				playerStates[i] = PlayerState::Blackjack;
+				msg += "\n[BLACKJACK] " + joinedPlayers[i].getName() + " got blackjack!\n";
+			}
+
+			for (int i = 0; i < joinedPlayers.size(); i++) {
+				if (playerStates[i] != PlayerState::Quitting) {
+					m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+				}
 			}
 		}
 		mutex.release();
@@ -253,7 +386,15 @@ private:
 	void stand(int i) {
 		mutex.acquire();
 		if (playerStates[i] != PlayerState::Quitting)
-		playerStates[i] = PlayerState::DoneTakingTurn;
+			playerStates[i] = PlayerState::DoneTakingTurn;
+		
+		std::string msg = "\n[BLACKJACK] " + joinedPlayers[playerTurn].getName() + " ends turn.\n";
+		
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting) {
+				m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), msg);
+			}
+		}
 		mutex.release();
 		unlockFunction();
 	}
@@ -303,7 +444,7 @@ private:
 		mutex.release();
 	}
 
-	void printPlayerState(int i) {
+	void sendPlayerState(int i) {
 		mutex.acquire();
 		if (playerStates[i] == PlayerState::Quitting) {
 			mutex.release();
@@ -314,24 +455,37 @@ private:
 		const Hand& hand = playerHands[i];
 		const int& bet = playerBets[i];
 
-		std::cout << "Player: " << player.getName() << '\n';
-		std::cout << "Money: " << player.getMoney() << '\n';
-		std::cout << "Your bet: " << bet << '\n';
+		std::string msg = "\n[BLACKJACK]\n";
 
-		std::cout << "Your cards: ";
+		msg += "Player: " + player.getName() + '\n';
+		msg += "Money: " + std::to_string(player.getMoney()) + '\n';
+		msg += "Your bet: " + std::to_string(bet) + '\n';
+
+		msg += "Your cards: ";
 		for (int i = 0; i < hand.getCards().size() - 1; i++) {
 			const Card& card = hand.getCards()[i];
 
-			std::cout << card.getValue() << ", ";
+			msg += std::to_string(card.getValue()) + ", ";
 		}
-		std::cout << hand.getCards()[hand.getCards().size() - 1].getValue() << '\n';
-		std::cout << "Total value: " << hand.getTotalValue() << '\n';
+		msg += std::to_string(hand.getCards()[hand.getCards().size() - 1].getValue()) + '\n';
+		msg += "Total value: " + std::to_string(hand.getTotalValue()) + '\n';
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
 		mutex.release();
 	}
 
-	void printDealerCardsInGame() {
+	void sendDealerCardsInGame() {
 		mutex.acquire();
-		std::cout << "Dealer's cards: " << dealerHand.getCards()[0].getValue() << " ?\n";
+		std::string msg = "\n[BLACKJACK]\nDealer's cards: " + std::to_string(dealerHand.getCards()[0].getValue());
+		msg +=" ?\n";
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
 		mutex.release();
 	}
 
@@ -339,25 +493,37 @@ private:
 		mutex.acquire();
 		const auto& dealerCards = dealerHand.getCards();
 		
-		std::cout << "Dealer's final cards: ";
+		std::string msg = "\n[BLACKJACK]\n";
+		msg += "Dealer's final cards: ";
 		for (int i = 0; i < dealerCards.size() - 1; i++) {
-			std::cout << dealerCards[i].getValue() << ", ";
+			msg += std::to_string(dealerCards[i].getValue()) + ", ";
 		}
-		std::cout << dealerCards[dealerCards.size() - 1].getValue() << '\n';
-		std::cout << "Dealer's total value: " << dealerHand.getTotalValue() << '\n';
+		msg += std::to_string(dealerCards[dealerCards.size() - 1].getValue()) + '\n';
+		msg += "Dealer's total value: " + std::to_string(dealerHand.getTotalValue()) + '\n';
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
+		}
 		mutex.release();
 	}
 
 	void printPlayerResults() {
 		mutex.acquire();
+		std::string msg = "\n[BLACKJACK]\n";
 		for (int i = 0; i < joinedPlayers.size(); i++) {
 			if (playerStates[i] == PlayerState::Quitting) continue;
 			const Player& player = joinedPlayers[i];
 			const PlayerState& result = playerStates[i];
 
-			std::cout << "Player: " << player.getName() << '\n';
-			std::cout << "Money: " << player.getMoney() << '\n';
-			std::cout << ((result == PlayerState::Win) ? "You win!\n" : "You lost!\n");
+			msg += "Player: " + player.getName() + '\n';
+			msg += "Money: " + std::to_string(player.getMoney()) + '\n';
+			msg += ((result == PlayerState::Win) ? "You win!\n" : "You lost!\n");
+		}
+
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting)
+				playerMessages[i] += msg;
 		}
 		mutex.release();
 	}
@@ -413,9 +579,15 @@ private:
 		mutex.release();
 	}
 
-	void Listener_MessageReceived(TcpListener* listener, int client, int sentClient, std::string msg) {
-		std::cout << "processing message" << std::endl;
+	void clearMessages() {
+		mutex.acquire();
+		for (int i = 0; i < playerMessages.size(); i++) {
+			playerMessages[i] = " ";
+		}
+		mutex.release();
+	}
 
+	void Listener_MessageReceived(TcpListener* listener, int client, int sentClient, std::string msg) {
 		std::string originalMsg = msg;
 		std::string delimiter = " ";
 		size_t pos = msg.find(delimiter);
@@ -423,13 +595,24 @@ private:
 		pos = msg.find(delimiter);
 		std::string command = msg.substr(0, pos);
 
-		if (command == "\\add") {
+		if (command == "\\help") {
+			if (client != sentClient) return;
+
+			mutex.acquire();
+			std::string commandList = "\n[BLACKJACK]\n";
+			commandList += "\\COMMAND LIST:\n";
+			commandList += "\\start         - Starts game automatically.\n";
+			commandList += "\\bet [integer] - Places integer amount of money for winning the round.\n";
+			commandList += "\\hit           - Gets dealt another card when players turn (can also type \\h).\n";
+			commandList += "\\stand         - Finish drawing cards and end player turn (can also type \\s).\n\n";
+			commandList += "\nIf backslash is not indicated, inputted text turns to message\n that is sent to all other connected clients.\n";
+
+			listener->sendMessageToClient(client, commandList);
+			mutex.release();
+		}
+		else if (command == "\\add") {
 			msg.erase(0, pos + delimiter.size());
 			pos = msg.find(delimiter);
-
-			// player join message
-			//   every player except one joining
-			//   
 
 			mutex.acquire();
 			if (originalMsg[0] == ' ') {
@@ -440,17 +623,11 @@ private:
 					if (!gameStarted) addPlayer(newPlayer);
 					else addPlayerToQueue(newPlayer);
 				}
-				else {
-					std::cout << "hi" << std::endl;
-					std::string sendMessage = msg.substr(0, pos) + " joined the Game!\r";
-					listener->sendMessageToClient(client, sendMessage);
-					mutex.release();
-				}
+				else mutex.release();
 			}
 			else mutex.release();
 		}
 		else if (command == "\\bet") {
-			std::cout << "betting command" << std::endl;
 			mutex.acquire();
 			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
 				sentClient == client && playerStates[playerTurn] == PlayerState::None) {
@@ -464,7 +641,6 @@ private:
 
 					if (player_bet <= 0) {
 						playerStates[playerTurn] = PlayerState::NotPlaying;
-						std::cout << "\nSkipping this game...";
 					}
 					else {
 						playerBets[playerTurn] = player_bet;
@@ -484,8 +660,6 @@ private:
 
 				hit(playerTurn);
 
-				std::cout << std::endl;
-
 				mutex.acquire();
 			}
 			mutex.release();
@@ -498,10 +672,14 @@ private:
 
 				stand(playerTurn);
 
-				std::cout << std::endl;
-
 				mutex.acquire();
 			}
+			mutex.release();
+		}
+		else if (command == "\\start") {
+			mutex.acquire();
+			if (!gameStarted)
+				gameStarted = true;
 			mutex.release();
 		}
 		else {
@@ -510,8 +688,17 @@ private:
 		} 
 	}
 
+	void sendMessagesToClient() {
+		mutex.acquire();
+		for (int i = 0; i < joinedPlayers.size(); i++) {
+			if (playerStates[i] != PlayerState::Quitting) {
+				m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), playerMessages[i]);
+			}
+		}
+		mutex.release();
+	}
+
 	bool cycleThroughPlayerTurns() {
-		std::cout << "increment turn" << std::endl;
 		bool endPhase = false;
 		mutex.acquire();
 		playerTurn++;
@@ -527,9 +714,11 @@ private:
 
 	void lockFunction() {
 		lock = true;
-		std::cout << "\nlock" << std::endl;
+		sendMessagesToClient();
+		
 		while (lock);
-		std::cout << "unlock" << std::endl;
+
+		clearMessages();
 	}
 
 	void unlockFunction() {
@@ -550,6 +739,7 @@ private:
 	std::vector<Hand> playerHands;
 	std::vector<int> playerBets;
 	std::vector<int> clientsQuitting;
+	std::vector<std::string> playerMessages;
 	Hand dealerHand;
 	int numPlayers;
 	int playerTurn;
