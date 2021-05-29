@@ -68,6 +68,7 @@ void TcpListener::run() {
 				if (bytesIn <= 0) {
 					// drop client
 					closesocket(socket);
+					m_Game->queuePlayerToRemove(socket);
 					FD_CLR(socket, &master);
 				}
 				else {

@@ -143,6 +143,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Lightswitch.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Random.cpp" />
     <ClCompile Include="TcpListener.cpp" />
@@ -152,9 +153,11 @@
     <ClInclude Include="Game.h" />
     <ClInclude Include="Hand.h" />
     <ClInclude Include="Input.h" />
+    <ClInclude Include="Lightswitch.h" />
     <ClInclude Include="Player.h" />
     <ClInclude Include="Random.h" />
     <ClInclude Include="TcpListener.h" />
+    <ClInclude Include="ThreadSafeVector.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
