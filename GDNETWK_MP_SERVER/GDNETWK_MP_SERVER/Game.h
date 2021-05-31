@@ -587,7 +587,9 @@ private:
 		mutex.release();
 	}
 
+	// callback function when server receives messages
 	void Listener_MessageReceived(TcpListener* listener, int client, int sentClient, std::string msg) {
+		// tries to find the command by splitting the string based on spaces
 		std::string originalMsg = msg;
 		std::string delimiter = " ";
 		size_t pos = msg.find(delimiter);
@@ -595,7 +597,7 @@ private:
 		pos = msg.find(delimiter);
 		std::string command = msg.substr(0, pos);
 
-		if (command == "\\help") {
+		if (command == "\\help") { // returns list of commands and sends it to desired client
 			if (client != sentClient) return;
 
 			mutex.acquire();
@@ -610,49 +612,55 @@ private:
 			listener->sendMessageToClient(client, commandList);
 			mutex.release();
 		}
-		else if (command == "\\add") {
+		else if (command == "\\add") { // adds player to the game (can not be called by player)
 			msg.erase(0, pos + delimiter.size());
 			pos = msg.find(delimiter);
 
 			mutex.acquire();
+			// the first character of the message when players joins is always space
+			// received messages from clients who are in the game do not start with space
 			if (originalMsg[0] == ' ') {
 				if (client == sentClient) {
 					Player newPlayer(msg.substr(0, pos), client, 1000);
 					mutex.release();
 
-					if (!gameStarted) addPlayer(newPlayer);
-					else addPlayerToQueue(newPlayer);
+					// checks if the game already started
+					if (!gameStarted) addPlayer(newPlayer); // adds player to list of players that will play the first round
+					else addPlayerToQueue(newPlayer); // otherwise, player is queued to play in the next round
 				}
 				else mutex.release();
 			}
 			else mutex.release();
 		}
-		else if (command == "\\bet") {
+		else if (command == "\\bet") { // sets the bet for player
 			mutex.acquire();
 			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
 				sentClient == client && playerStates[playerTurn] == PlayerState::None) {
 
+				// finds the number that the player betted
 				msg.erase(0, pos + delimiter.size());
 				pos = msg.find(delimiter);
 
+				// converts number string into integer only if the first character in string starts with number
 				std::string player_bet_string = msg.substr(0, pos);
 				if ((int)player_bet_string[0] >= 48 && (int)player_bet_string[0] <= 57) {
 					int player_bet = std::stoi(player_bet_string);
 
-					if (player_bet <= 0) {
+					if (player_bet <= 0) { // skips player turn if not playing
 						playerStates[playerTurn] = PlayerState::NotPlaying;
 					}
-					else {
+					else { // will mark player as playing this round if they have betted greater than 0
 						playerBets[playerTurn] = player_bet;
 						playerStates[playerTurn] = PlayerState::TakingTurn;
 					}
 
+					// tells game loop to progress
 					unlockFunction();
 				}
 			}
 			mutex.release();
 		}
-		else if (command == "\\hit" || command == "\\h") {
+		else if (command == "\\hit" || command == "\\h") { // tells game to draw another card
 			mutex.acquire();
 			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
 				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
@@ -664,7 +672,7 @@ private:
 			}
 			mutex.release();
 		}
-		else if (command == "\\stand" || command == "\\s") {
+		else if (command == "\\stand" || command == "\\s") { // tells game to end player turn
 			mutex.acquire();
 			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
 				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
@@ -676,13 +684,13 @@ private:
 			}
 			mutex.release();
 		}
-		else if (command == "\\start") {
+		else if (command == "\\start") { // starts game if game hasn't started
 			mutex.acquire();
 			if (!gameStarted)
 				gameStarted = true;
 			mutex.release();
 		}
-		else {
+		else { // otherwise, sends a message to other clients
 			if (client == sentClient) return;
 			listener->sendMessageToClient(client, originalMsg);
 		} 
@@ -690,6 +698,7 @@ private:
 
 	void sendMessagesToClient() {
 		mutex.acquire();
+		// sends the string of accumulated meessages to the client
 		for (int i = 0; i < joinedPlayers.size(); i++) {
 			if (playerStates[i] != PlayerState::Quitting) {
 				m_Listener->sendMessageToClient(joinedPlayers[i].getClientNumber(), playerMessages[i]);
@@ -703,6 +712,7 @@ private:
 		mutex.acquire();
 		playerTurn++;
 
+		// goes back to the first player once it reaches end of player list
 		if (playerTurn >= joinedPlayers.size()) {
 			playerTurn = 0;
 			endPhase = true;
@@ -714,17 +724,19 @@ private:
 
 	void lockFunction() {
 		lock = true;
-		sendMessagesToClient();
 		
-		while (lock);
+		sendMessagesToClient(); // sends messages to client before locking function
+		
+		while (lock); // prevents game loop functioning from proceeding until told to unlock
 
-		clearMessages();
+		clearMessages(); // resets messages with empty string
 	}
 
 	void unlockFunction() {
 		lock = false;
 	}
 
+	// checks if there are any players still in the game
 	bool verifyIfGameIsEmpty() {
 		return joinedPlayers.empty();
 	}

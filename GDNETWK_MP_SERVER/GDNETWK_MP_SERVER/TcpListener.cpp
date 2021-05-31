@@ -99,6 +99,7 @@ void TcpListener::createSocket() {
 	listening = socket(AF_INET, SOCK_STREAM, 0);
 	if (listening == INVALID_SOCKET) {
 		std::cerr << "Can't create a socket! Quitting..." << std::endl;
+		cleanup();
 		return;
 	}
 

@@ -17,29 +17,37 @@ SOCKET sock;
 
 // prints out characters one at a time and saves it to global userInput string to
 // prevent typed out messages from being cut off in the middle by received messages
+// gotten from a different thread
 void typeMessage() {
 	while (true) {
+		// waits for user to input a character
 		char letter = _getch();
+		
+		// removes weird character such as arrow keys being printed
+		if ((int)letter != 72 && (int)letter != 75 && (int)letter != 77 && (int)letter != 80 && (int)letter != -32) {
+			if (letter == '\r') { // sends a message when inputted enter
+				if (userInput.size() > 0) { // make sure the user has typed in something
+					std::cout << std::endl << username << ": ";
 
-		if (letter == '\r') {
-			if (userInput.size() > 0) { // make sure the user has typed in something
-				std::cout << std::endl << username << ": ";
+					std::string message = username + ": " + userInput;
 
-				std::string message = username + ": " + userInput;
+					// send text to listening socket
+					int sendResult = send(sock, message.c_str(), message.size() + 1, 0);
 
-				// send the text
-				int sendResult = send(sock, message.c_str(), message.size() + 1, 0);
-
-				userInput = "";
+					// empties out userInput string
+					userInput = "";
+				}
 			}
-		} else if (letter == '\b') {
-			if (!userInput.empty()) {
-				std::cout << "\b \b";
-				userInput.pop_back();
+			else if (letter == '\b') { // deletes last character in inputted string when inputting backspace
+				if (!userInput.empty()) {
+					std::cout << "\b \b";
+					userInput.pop_back();
+				}
 			}
-		} else {
-			std::cout << letter;
-			userInput.push_back(letter);
+			else { // otherwise, prints out the character and adds it to input string
+				std::cout << letter;
+				userInput.push_back(letter);
+			}
 		}
 	}
 }
@@ -63,22 +71,32 @@ void receiveMessage() {
 	}
 }
 
-int main() {
-	// initialize winsock
-	WSAData data;
-	WORD ver = MAKEWORD(2, 2);
-	int wsResult = WSAStartup(ver, &data);
-	if (wsResult != 0) {
-		std::cerr << "Can't start Winsock, Error #" << wsResult << ". Quitting..." << std::endl;
-		return 69;
+void createGameProfile() {
+	std::cout << "Enter your name: ";
+	std::getline(std::cin, username);
+	for (int i = 0; i < username.size(); i++) {
+		if (username[i] == ' ')
+			username[i] = '_';
 	}
+	std::cout << std::endl << "[BLACKJACK]\nAwesome " << username << "! Welcome to BLACKJACK." << std::endl;
+	std::cout << "Type \\help for list of available commands to play the game." << std::endl;
 
+	// Adds user to game
+	std::string message = " \\add " + username;
+	send(sock, message.c_str(), message.size() + 1, 0);
+}
+
+void cleanup() {
+	WSACleanup();
+}
+
+bool createSocket() {
 	// create socket
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) {
 		std::cerr << "Can't create socket, Error #" << WSAGetLastError() << ". Quitting..." << std::endl;
-		WSACleanup();
-		return 420;
+		cleanup();
+		return false;
 	}
 
 	// fill in a hint structure
@@ -93,27 +111,40 @@ int main() {
 		std::cerr << "Can't connect to server, Err #" << WSAGetLastError() << ". Quitting..." << std::endl;
 		closesocket(sock);
 		WSACleanup();
-		return -1;
+		return false;
 	}
 
-	std::cout << "Enter your name: ";
-	std::getline(std::cin, username);
-	for (int i = 0; i < username.size(); i++) {
-		if (username[i] == ' ')
-			username[i] = '_';
+	return true;
+}
+
+bool init() {
+	// initialize winsock
+	WSAData data;
+	WORD ver = MAKEWORD(2, 2);
+	int wsResult = WSAStartup(ver, &data);
+	if (wsResult != 0) {
+		std::cerr << "Can't start Winsock, Error #" << wsResult << ". Quitting..." << std::endl;
+		return false;
 	}
-	std::cout << std::endl << std::endl << "Awesome " << username << "! Welcome to BLACKJACK." << std::endl;
-	std::cout << "Type \\help for list of available commands to play the game." << std::endl << std::endl;
 
-	// Adds user to game
-	std::string message = " \\add " + username;
-	send(sock, message.c_str(), message.size() + 1, 0);
+	return createSocket();
+ }
 
+int main() {
+	// initialize winsock
+	if (!init()) return -1;
+
+	createGameProfile();
+
+	// runs byte receiving in separate thread
 	std::thread(&receiveMessage).detach();
 
+	// handles byte sending in main thread
 	typeMessage();
 	
 	// gracefully close down everything
 	closesocket(sock);
 	WSACleanup();
+
+	return 0;
 }
