@@ -15,7 +15,6 @@ class TcpListener;
 class Game;
 
 // callback to data received
-//typedef void (*MessageReceivedHandler)(TcpListener* listener, int socketId, std::string msg);
 typedef std::function<void(TcpListener* listener, int socketId, int sentSocketId, std::string msg)> MessageReceivedHandler;
 
 class TcpListener {
@@ -43,8 +42,13 @@ private:
 	// create a socket
 	void createSocket();
 
+	// listens for connections to connect
+	void listenForConnections();
+
 	// wait for a connection
 	SOCKET waitForConnection();
+
+	void checkConnectedSocket(SOCKET socket, char* buf);
 
 	Game* m_Game;
 	SOCKET					listening;

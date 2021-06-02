@@ -23,7 +23,9 @@ enum class PlayerState {
 class Game {
 public:
 	Game(TcpListener* listener) : m_Listener(listener) {
-		listener->setCallback(std::bind(&Game::Listener_MessageReceived, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+		listener->setCallback(std::bind(&Game::Listener_MessageReceived, this, std::placeholders::_1,
+			std::placeholders::_2, std::placeholders::_3, std::placeholders::_4));
+
 		resetDeck();
 		numPlayers = 0;
 	}
@@ -35,13 +37,12 @@ public:
 	}
 
 	void run() {
-
 		gameStarted = false;
 		playerTurn = 0;
 
 		std::cout << "START GAME" << std::endl;
 
-		while (joinedPlayers.size() < MAX_PLAYERS && !gameStarted);
+		while (!gameStarted);
 
 		gameStarted = true;
 
@@ -58,8 +59,8 @@ public:
 			printDealerCardsEndGame();
 			printPlayerResults();
 
-			moveQueuedPlayersToGame();
 			removeQuittedPlayers();
+			moveQueuedPlayersToGame();
 
 			if (verifyIfGameIsEmpty())
 				break;
@@ -105,13 +106,25 @@ public:
 
 	void moveQueuedPlayersToGame() {
 		std::string msg;
+		std::vector<Player> tempPlayerVector;
+
 		for (int i = 0; i < queuedPlayersToJoin.size(); i++) {
-			msg += "\n[BLACKJACK] Moved " + queuedPlayersToJoin[i].getName() +" to active players\n";
-			addPlayer(queuedPlayersToJoin[i]);
+			if (joinedPlayers.size() >= MAX_PLAYERS) {
+				msg += "\n[BLACKJACK] Max players reached! Placing " + queuedPlayersToJoin[i].getName() + " back in queue";
+				tempPlayerVector.push_back(queuedPlayersToJoin[i]);
+			}
+			else {
+				msg += "\n[BLACKJACK] Moved " + queuedPlayersToJoin[i].getName() + " to active players";
+				addPlayer(queuedPlayersToJoin[i]);
+			}
 		}
 
 		mutex.acquire();
 		queuedPlayersToJoin.clear();
+
+		for (int i = 0; i < tempPlayerVector.size(); i++) {
+			queuedPlayersToJoin.push_back(tempPlayerVector[i]);
+		}
 
 		for (int i = 0; i < joinedPlayers.size(); i++) {
 			if (playerStates[i] != PlayerState::Quitting)
@@ -198,7 +211,7 @@ public:
 
 private:
 	void allowPlayersToBet() {
-		while (playerTurn < joinedPlayers.size()) {
+		while (!joinedPlayers.empty() && playerTurn < joinedPlayers.size()) {
 			
 			sendPlayersBetMessage();
 			
@@ -306,7 +319,7 @@ private:
 	}
 
 	void givePlayersTurns() {
-		while (playerTurn < joinedPlayers.size()) {
+		while (!joinedPlayers.empty() && playerTurn < joinedPlayers.size()) {
 			mutex.acquire();
 			PlayerState& currentPlayerState = playerStates[playerTurn];
 
@@ -335,7 +348,6 @@ private:
 				else continue;
 			}
 
-			printSeparator();
 			mutex.release();
 
 			// Process player's turn
@@ -597,103 +609,118 @@ private:
 		pos = msg.find(delimiter);
 		std::string command = msg.substr(0, pos);
 
-		if (command == "\\help") { // returns list of commands and sends it to desired client
-			if (client != sentClient) return;
+		if (command == "\\help") helpCommand(listener, client, sentClient);
+		else if (command == "\\add") addCommand(client, sentClient, msg, pos, delimiter, originalMsg);
+		else if (command == "\\bet") betCommand(client, sentClient, msg, pos, delimiter);
+		else if (command == "\\hit" || command == "\\h") hitCommand(client, sentClient);
+		else if (command == "\\stand" || command == "\\s") standCommand(client, sentClient);
+		else if (command == "\\start") startCommand();
+		else chat(listener, client, sentClient, originalMsg);
+	}
 
-			mutex.acquire();
-			std::string commandList = "\n[BLACKJACK]\n";
-			commandList += "\\COMMAND LIST:\n";
-			commandList += "\\start         - Starts game automatically.\n";
-			commandList += "\\bet [integer] - Places integer amount of money for winning the round.\n";
-			commandList += "\\hit           - Gets dealt another card when players turn (can also type \\h).\n";
-			commandList += "\\stand         - Finish drawing cards and end player turn (can also type \\s).\n\n";
-			commandList += "\nIf backslash is not indicated, inputted text turns to message\n that is sent to all other connected clients.\n";
+	void helpCommand(TcpListener* listener, int client, int sentClient) {
+		if (client != sentClient) return;
 
-			listener->sendMessageToClient(client, commandList);
-			mutex.release();
-		}
-		else if (command == "\\add") { // adds player to the game (can not be called by player)
-			msg.erase(0, pos + delimiter.size());
-			pos = msg.find(delimiter);
+		mutex.acquire();
+		std::string commandList = "\n[BLACKJACK]\n";
+		commandList += "COMMAND LIST:\n";
+		commandList += "\\start         - Starts game automatically.\n";
+		commandList += "\\bet [integer] - Places integer amount of money for winning the round.\n";
+		commandList += "\\hit           - Gets dealt another card when players turn (can also type \\h).\n";
+		commandList += "\\stand         - Finish drawing cards and end player turn (can also type \\s).\n\n";
+		commandList += "\nIf backslash is not indicated, inputted text turns to message\n that is sent to all other connected clients.\n";
 
-			mutex.acquire();
-			// the first character of the message when players joins is always space
-			// received messages from clients who are in the game do not start with space
-			if (originalMsg[0] == ' ') {
-				if (client == sentClient) {
-					Player newPlayer(msg.substr(0, pos), client, 1000);
-					mutex.release();
+		listener->sendMessageToClient(client, commandList);
+		mutex.release();
+	}
 
-					// checks if the game already started
-					if (!gameStarted) addPlayer(newPlayer); // adds player to list of players that will play the first round
-					else addPlayerToQueue(newPlayer); // otherwise, player is queued to play in the next round
-				}
-				else mutex.release();
+	void addCommand(int client, int sentClient, std::string msg, size_t pos, std::string delimiter, std::string originalMsg) {
+		msg.erase(0, pos + delimiter.size());
+		pos = msg.find(delimiter);
+
+		mutex.acquire();
+		// the first character of the message when user creates profile is always space
+		// received messages from clients who are in the game do not start with space
+		if (originalMsg[0] == ' ') {
+			if (client == sentClient) {
+				Player newPlayer(msg.substr(0, pos), client, 1000);
+				mutex.release();
+
+				// adds player to active players if max player size is not reached yet and 
+				// the game has yet to start
+				if (!gameStarted && joinedPlayers.size() < MAX_PLAYERS) addPlayer(newPlayer);
+				else addPlayerToQueue(newPlayer);
 			}
 			else mutex.release();
 		}
-		else if (command == "\\bet") { // sets the bet for player
-			mutex.acquire();
-			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
-				sentClient == client && playerStates[playerTurn] == PlayerState::None) {
+		else mutex.release();
+	}
 
-				// finds the number that the player betted
-				msg.erase(0, pos + delimiter.size());
-				pos = msg.find(delimiter);
+	void betCommand(int client, int sentClient, std::string msg, size_t pos, std::string delimiter) {
+		mutex.acquire();
+		if (gameStarted && sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+			sentClient == client && playerStates[playerTurn] == PlayerState::None) {
 
-				// converts number string into integer only if the first character in string starts with number
-				std::string player_bet_string = msg.substr(0, pos);
-				if ((int)player_bet_string[0] >= 48 && (int)player_bet_string[0] <= 57) {
-					int player_bet = std::stoi(player_bet_string);
+			// finds the number that the player betted
+			msg.erase(0, pos + delimiter.size());
+			pos = msg.find(delimiter);
 
-					if (player_bet <= 0) { // skips player turn if not playing
-						playerStates[playerTurn] = PlayerState::NotPlaying;
-					}
-					else { // will mark player as playing this round if they have betted greater than 0
-						playerBets[playerTurn] = player_bet;
-						playerStates[playerTurn] = PlayerState::TakingTurn;
-					}
+			// converts number string into integer only if the first character in string starts with number
+			std::string player_bet_string = msg.substr(0, pos);
+			if ((int)player_bet_string[0] >= 48 && (int)player_bet_string[0] <= 57) {
+				int player_bet = std::stoi(player_bet_string);
 
-					// tells game loop to progress
-					unlockFunction();
+				if (player_bet <= 0) { // skips player turn if not playing
+					playerStates[playerTurn] = PlayerState::NotPlaying;
 				}
+				else { // will mark player as playing this round if they have betted greater than 0
+					playerBets[playerTurn] = player_bet;
+					playerStates[playerTurn] = PlayerState::TakingTurn;
+				}
+
+				// tells game loop to progress
+				unlockFunction();
 			}
-			mutex.release();
 		}
-		else if (command == "\\hit" || command == "\\h") { // tells game to draw another card
+		mutex.release();
+	}
+
+	void hitCommand(int client, int sentClient) {
+		mutex.acquire();
+		if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+			sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
+			mutex.release();
+
+			hit(playerTurn);
+
 			mutex.acquire();
-			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
-				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
-				mutex.release();
-
-				hit(playerTurn);
-
-				mutex.acquire();
-			}
-			mutex.release();
 		}
-		else if (command == "\\stand" || command == "\\s") { // tells game to end player turn
+		mutex.release();
+	}
+
+	void standCommand(int client, int sentClient) {
+		mutex.acquire();
+		if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
+			sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
+			mutex.release();
+
+			stand(playerTurn);
+
 			mutex.acquire();
-			if (sentClient == joinedPlayers[playerTurn].getClientNumber() &&
-				sentClient == client && playerStates[playerTurn] == PlayerState::TakingTurn) {
-				mutex.release();
-
-				stand(playerTurn);
-
-				mutex.acquire();
-			}
-			mutex.release();
 		}
-		else if (command == "\\start") { // starts game if game hasn't started
-			mutex.acquire();
-			if (!gameStarted)
-				gameStarted = true;
-			mutex.release();
-		}
-		else { // otherwise, sends a message to other clients
-			if (client == sentClient) return;
-			listener->sendMessageToClient(client, originalMsg);
-		} 
+		mutex.release();
+	}
+
+	void startCommand() {
+		mutex.acquire();
+		if (!gameStarted)
+			gameStarted = true;
+		mutex.release();
+	}
+
+	void chat(TcpListener* listener, int client, int sentClient, std::string originalMsg) {
+		if (client == sentClient) return;
+		listener->sendMessageToClient(client, originalMsg);
 	}
 
 	void sendMessagesToClient() {
@@ -738,10 +765,17 @@ private:
 
 	// checks if there are any players still in the game
 	bool verifyIfGameIsEmpty() {
-		return joinedPlayers.empty();
+		if (joinedPlayers.empty()) {
+			if (queuedPlayersToJoin.empty())
+				return true;
+
+			unlockFunction();
+		}
+
+		return false;
 	}
 
-	const int MAX_PLAYERS = 4;
+	const int MAX_PLAYERS = 2;
 
 	TcpListener* m_Listener;
 	std::vector<Card> deck;

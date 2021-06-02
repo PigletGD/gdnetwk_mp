@@ -10,10 +10,12 @@
 
 std::string ipAddress = "127.0.0.1";		// IP Address of the server
 int port = 54010;							// Listening port # on the server
+SOCKET sock;
+
 std::string username = "";
 std::string userInput = "";
 
-SOCKET sock;
+
 
 // prints out characters one at a time and saves it to global userInput string to
 // prevent typed out messages from being cut off in the middle by received messages
@@ -94,7 +96,8 @@ bool createSocket() {
 	// create socket
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) {
-		std::cerr << "Can't create socket, Error #" << WSAGetLastError() << ". Quitting..." << std::endl;
+		std::cerr << "Can't create socket, Error #" 
+			<< WSAGetLastError() << ". Quitting..." << std::endl;
 		cleanup();
 		return false;
 	}
@@ -108,7 +111,8 @@ bool createSocket() {
 	// connect to server
 	int connResult = connect(sock, (sockaddr*)&hint, sizeof(hint));
 	if (connResult == SOCKET_ERROR) {
-		std::cerr << "Can't connect to server, Err #" << WSAGetLastError() << ". Quitting..." << std::endl;
+		std::cerr << "Can't connect to server, Err #" 
+			<< WSAGetLastError() << ". Quitting..." << std::endl;
 		closesocket(sock);
 		WSACleanup();
 		return false;
@@ -122,8 +126,10 @@ bool init() {
 	WSAData data;
 	WORD ver = MAKEWORD(2, 2);
 	int wsResult = WSAStartup(ver, &data);
+	
 	if (wsResult != 0) {
-		std::cerr << "Can't start Winsock, Error #" << wsResult << ". Quitting..." << std::endl;
+		std::cerr << "Can't start Winsock, Error #" 
+			<< wsResult << ". Quitting..." << std::endl;
 		return false;
 	}
 

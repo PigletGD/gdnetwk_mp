@@ -52,38 +52,8 @@ void TcpListener::run() {
 
 		for (int i = 0; i < socketCount; i++) {
 			SOCKET socket = copy.fd_array[i];
-			if (socket == listening) {
-
-				SOCKET client = waitForConnection();
-				// add the new connection to the list of connected clients
-				FD_SET(client, &master);
-
-				// ensures client in waiting gets sent blanket message
-				sendMessageToClient(client, " \b");
-			}
-			else {
-				ZeroMemory(buf, MAX_BUFFER_SIZE);
-
-				int bytesIn = recv(socket, buf, MAX_BUFFER_SIZE, 0);
-				if (bytesIn <= 0) {
-					// drop client
-					closesocket(socket);
-					m_Game->queuePlayerToRemove(socket);
-					FD_CLR(socket, &master);
-				}
-				else {
-					// send message to other clients, and definitely not listening socket
-					for (int i = 0; i < master.fd_count; i++) {
-						SOCKET outSock = master.fd_array[i];
-						if (MessageReceived != NULL && outSock != listening) {
-							std::ostringstream ss;
-							ss << buf << " \r" << std::endl;
-							std::string strOut = ss.str();
-							MessageReceived(this, outSock, socket, std::string(buf, 0, bytesIn));
-						}
-					}
-				}
-			}
+			if (socket == listening) listenForConnections();
+			else checkConnectedSocket(socket, buf);
 		}
 	}
 }
@@ -115,10 +85,43 @@ void TcpListener::createSocket() {
 	if (listenOk == SOCKET_ERROR) return;
 }
 
+void TcpListener::listenForConnections() {
+	SOCKET client = waitForConnection();
+	// add the new connection to the list of connected clients
+	FD_SET(client, &master);
+
+	// ensures client in waiting gets sent blanket message
+	sendMessageToClient(client, " \b");
+}
+
 // wait for a connection
 SOCKET TcpListener::waitForConnection()
 {
 	SOCKET client = accept(listening, nullptr, nullptr);
 
 	return client;
+}
+
+void TcpListener::checkConnectedSocket(SOCKET socket, char* buf) {
+	ZeroMemory(buf, MAX_BUFFER_SIZE);
+
+	int bytesIn = recv(socket, buf, MAX_BUFFER_SIZE, 0);
+	if (bytesIn <= 0) {
+		// drop client
+		closesocket(socket);
+		m_Game->queuePlayerToRemove(socket);
+		FD_CLR(socket, &master);
+	}
+	else {
+		// send message to other clients, and definitely not listening socket
+		for (int i = 0; i < master.fd_count; i++) {
+			SOCKET outSock = master.fd_array[i];
+			if (MessageReceived != NULL && outSock != listening) {
+				std::ostringstream ss;
+				ss << buf << " \r" << std::endl;
+				std::string strOut = ss.str();
+				MessageReceived(this, outSock, socket, std::string(buf, 0, bytesIn));
+			}
+		}
+	}
 }
