@@ -530,7 +530,15 @@ private:
 
 			msg += "Player: " + player.getName() + '\n';
 			msg += "Money: " + std::to_string(player.getMoney()) + '\n';
-			msg += ((result == PlayerState::Win) ? "You win!\n" : "You lost!\n");
+			if (result == PlayerState::Win) {
+				msg += "You win!\n";
+			}
+			else if (result == PlayerState::Push) {
+				msg += "You pushed!\n";
+			}
+			else {
+				msg += "You lost!\n";
+			}
 		}
 
 		for (int i = 0; i < joinedPlayers.size(); i++) {
@@ -775,7 +783,7 @@ private:
 		return false;
 	}
 
-	const int MAX_PLAYERS = 2;
+	const int MAX_PLAYERS = 6;
 
 	TcpListener* m_Listener;
 	std::vector<Card> deck;
